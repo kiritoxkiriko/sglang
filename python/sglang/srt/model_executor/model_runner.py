@@ -20,7 +20,6 @@ import importlib
 import importlib.resources
 import logging
 import pkgutil
-import warnings
 from functools import lru_cache
 from typing import Optional, Type
 
@@ -40,7 +39,6 @@ from vllm.distributed import (
     initialize_model_parallel,
     set_custom_all_reduce,
 )
-from vllm.distributed.parallel_state import in_the_same_node_as
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import ModelRegistry
 
@@ -138,9 +136,9 @@ class ModelRunner:
         self.init_cublas()
         self.init_flashinfer()
 
+        # Capture cuda graphs
         if self.is_generation:
-            # FIXME Currently, cuda graph only capture decode steps, which only exists in causal models
-            # Capture cuda graphs
+            # FIXME Currently, cuda graph only capture decode steps, which only exists in generation models
             self.init_cuda_graphs()
 
     def load_model(self):

@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-"""ModelRunner runs the forward passes of the models."""
+"""Meta data for a forward pass."""
+
 from dataclasses import dataclass
 from enum import IntEnum, auto
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List
 
 import numpy as np
 import torch
@@ -185,7 +186,6 @@ class InputMetadata:
         )
 
         ret.compute_positions(batch)
-
         ret.compute_extend_infos(batch)
 
         if (
@@ -208,7 +208,7 @@ class InputMetadata:
                 and model_runner.sliding_window_size is None
             ):
                 flashinfer_use_ragged = True
-            ret.init_flashinfer_handlers(
+            ret.init_flashinfer_args(
                 model_runner, batch.prefix_lens_cpu, flashinfer_use_ragged
             )
 
@@ -227,18 +227,19 @@ class InputMetadata:
             extend_seq_lens = self.seq_lens - self.triton_prefix_lens
             self.triton_max_extend_len = int(torch.max(extend_seq_lens))
 
-    def init_flashinfer_handlers(
+    def init_flashinfer_args(
         self,
         model_runner,
         prefix_lens_cpu,
         flashinfer_use_ragged,
     ):
+        """Init auxiliary variables for triton attention backend."""
         if self.forward_mode != ForwardMode.DECODE:
             prefix_lens = torch.tensor(prefix_lens_cpu, device="cuda")
         else:
             prefix_lens = None
 
-        update_flashinfer_indices(
+        update_flashinfer_wrapper_indices(
             self.forward_mode,
             model_runner,
             self.req_pool_indices,
@@ -260,7 +261,7 @@ class InputMetadata:
         )
 
 
-def update_flashinfer_indices(
+def update_flashinfer_wrapper_indices(
     forward_mode,
     model_runner,
     req_pool_indices,

@@ -29,6 +29,15 @@ from sglang.srt.model_executor.model_runner import global_server_args_dict
 
 
 class RadixAttention(nn.Module):
+    """
+    The attention layer implementation.
+
+    Now it has two backends: FlashInfer and Triton.
+    FlashInfer is faster and Triton is easier to customize.
+
+    It supports two operators: extend (i.e. prefill with cached prefix) and decode.
+    """
+
     def __init__(
         self,
         num_heads: int,
@@ -50,7 +59,9 @@ class RadixAttention(nn.Module):
         self.scaling = scaling
         self.layer_id = layer_id
         self.sliding_window_size = sliding_window_size if sliding_window_size else -1
+        self.logit_cap = logit_cap if logit_cap is not None and logit_cap > 0 else 0
 
+        # Choose backend
         if (
             not global_server_args_dict.get("disable_flashinfer", False)
             and self.qk_head_dim == self.v_head_dim
@@ -60,8 +71,6 @@ class RadixAttention(nn.Module):
         else:
             self.extend_forward = self.extend_forward_triton
             self.decode_forward = self.decode_forward_triton
-
-        self.logit_cap = logit_cap if logit_cap is not None and logit_cap > 0 else 0
 
     def extend_forward_triton(self, q, k, v, input_metadata: InputMetadata):
         if self.qk_head_dim != self.v_head_dim:
