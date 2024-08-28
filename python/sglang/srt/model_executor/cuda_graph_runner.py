@@ -54,7 +54,10 @@ def _to_torch(model: torch.nn.Module, reverse: bool = False):
 
 @contextmanager
 def patch_model(
-    model: torch.nn.Module, enable_compile: bool, tp_group: "GroupCoordinator"
+    model: torch.nn.Module,
+    enable_compile: bool,
+    enable_torchao: bool,
+    tp_group: "GroupCoordinator",
 ):
     backup_ca_comm = None
 
@@ -64,6 +67,18 @@ def patch_model(
             monkey_patch_vllm_all_gather()
             backup_ca_comm = tp_group.ca_comm
             tp_group.ca_comm = None
+            if enable_torchao:
+                from torchao.quantization.quant_api import (
+                    int4_weight_only,
+                    int8_dynamic_activation_int4_weight,
+                    int8_dynamic_activation_int8_semi_sparse_weight,
+                    int8_dynamic_activation_int8_weight,
+                    int8_weight_only,
+                    quantize_,
+                )
+
+                quantize_(model, int4_weight_only())
+                print(model)
             yield torch.compile(model.forward, mode="max-autotune-no-cudagraphs")
         else:
             yield model.forward
@@ -169,6 +184,7 @@ class CudaGraphRunner:
                 with patch_model(
                     self.model_runner.model,
                     bs in self.compile_bs,
+                    self.model_runner.server_args.enable_torchao,
                     self.model_runner.tp_group,
                 ) as forward:
                     (
