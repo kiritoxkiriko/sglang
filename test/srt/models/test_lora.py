@@ -28,9 +28,10 @@ LORA_SETS = [
     # {
     #     "base": "meta-llama/Llama-2-7b-hf",
     #     "loras": ["RuterNorway/Llama-2-7b-chat-norwegian-LoRa"],
-    # }
-    {"base": "meta-llama/Llama-2-7b-hf", "loras": ["winddude/wizardLM-LlaMA-LoRA-7B"]}
-    # {"base": "meta-llama/Llama-2-7b-hf", "loras": ["yard1/llama-2-7b-sql-lora-test"]}
+    # },
+    # {"base": "meta-llama/Llama-2-7b-hf", "loras": ["winddude/wizardLM-LlaMA-LoRA-7B"]},
+    {"base": "mistralai/Mistral-7B-Instruct-v0.3", "loras": ["/root/test_lora"]},
+    # {"base": "meta-llama/Llama-2-7b-hf", "loras": ["yard1/llama-2-7b-sql-lora-test"]},
 ]
 TORCH_DTYPES = [torch.float16]
 
@@ -43,15 +44,15 @@ Mention the word "large language models" in that poem.
 The Transformers are large language models,
 They're used to make predictions on text.
 """,
-    """
-### Instruction:
-Tell me about llamas and alpacas
-### Response:
-Llamas are large, long-necked animals with a woolly coat. They have two toes on each foot instead of three like other camelids (camels, dromedaries). Llamas live in the Andean mountains of South America where they graze on grasses and shrubs. Alpaca is another name for domesticated llama. The word "alpaca" comes from an Incan language meaning "golden fleece." Alpacas look very similar to llamas but are smaller than their wild relatives. Both species were used by ancient people as pack animals and for meat. Today both llamas and alpacas are raised primarily for their fiber which can be spun into yarn or knitted into clothing.
-### Question 2:
-What do you know about llamas?
-### Answer:
-""",
+    #     """
+    # ### Instruction:
+    # Tell me about llamas and alpacas
+    # ### Response:
+    # Llamas are large, long-necked animals with a woolly coat. They have two toes on each foot instead of three like other camelids (camels, dromedaries). Llamas live in the Andean mountains of South America where they graze on grasses and shrubs. Alpaca is another name for domesticated llama. The word "alpaca" comes from an Incan language meaning "golden fleece." Alpacas look very similar to llamas but are smaller than their wild relatives. Both species were used by ancient people as pack animals and for meat. Today both llamas and alpacas are raised primarily for their fiber which can be spun into yarn or knitted into clothing.
+    # ### Question 2:
+    # What do you know about llamas?
+    # ### Answer:
+    # """,
 ]
 
 
@@ -194,7 +195,7 @@ class TestLoRA(unittest.TestCase):
             # self.load_lora_adapter(lora_set, 1)
             for torch_dtype in TORCH_DTYPES:
                 tp_size = 1
-                max_new_tokens = 64
+                max_new_tokens = 32
                 self.inference(PROMPTS, lora_set, tp_size, torch_dtype, max_new_tokens)
                 # self.base_inference(
                 #     PROMPTS, lora_set, tp_size, torch_dtype, max_new_tokens
