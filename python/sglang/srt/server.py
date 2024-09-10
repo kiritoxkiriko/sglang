@@ -93,6 +93,33 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 app = FastAPI()
 tokenizer_manager = None
 
+# body logger
+import time
+
+def body_logger(raw_request: Request, start_time: float, resp=None):
+    request_body = raw_request.json()
+    if resp is not None and hasattr(resp, 'model_dump_json'):
+        resp = resp.model_dump_json()
+    process_time = time.time() - start_time
+    request_id = raw_request.headers.get('X-NADP-RequestID')
+    logger.info(
+        f'receive request: id: {request_id}, body: {request_body}, resp: {resp}, time: {process_time}')
+
+def mount_my_metrics(app: FastAPI):
+    ## add metrics
+    logger.info("Mounting my metrics")
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    prom_instrumentator = Instrumentator(
+        should_group_status_codes=False,
+        should_ignore_untemplated=True,
+        # should_respect_env_var=True,
+        excluded_handlers=[".*admin.*", "/metrics", "/metrics-vllm","/health.*"],
+    )
+    instrumentator = prom_instrumentator.instrument(app)
+    instrumentator.expose(app, endpoint="/metrics")
+# mount metrics
+mount_my_metrics(app)
 
 @app.get("/health")
 async def health() -> Response:
@@ -210,7 +237,10 @@ async def openai_v1_completions(raw_request: Request):
 
 @app.post("/v1/chat/completions")
 async def openai_v1_chat_completions(raw_request: Request):
-    return await v1_chat_completions(tokenizer_manager, raw_request)
+    s_time = time.time()
+    resp = await v1_chat_completions(tokenizer_manager, raw_request)
+    body_logger(raw_request, s_time, resp)
+    return resp
 
 
 @app.post("/v1/embeddings")
