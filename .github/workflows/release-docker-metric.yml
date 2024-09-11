@@ -33,35 +33,34 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and Push
         run: |
           version=$(cat python/sglang/version.py | cut -d'"' -f2)
 
-#          if [ "${{ matrix.cuda_version }}" = "11.8.0" ]; then
-#            cuda_tag="cu118"
-#          elif [ "${{ matrix.cuda_version }}" = "12.1.1" ]; then
-#            cuda_tag="cu121"
-#          elif [ "${{ matrix.cuda_version }}" = "12.4.1" ]; then
-#            cuda_tag="cu124"
-#          else
-#            echo "Unsupported CUDA version"
-#            exit 1
-#          fi
+          #if [ "${{ matrix.cuda_version }}" = "11.8.0" ]; then
+          #  cuda_tag="cu118"
+          #elif [ "${{ matrix.cuda_version }}" = "12.1.1" ]; then
+          #  cuda_tag="cu121"
+          #elif [ "${{ matrix.cuda_version }}" = "12.4.1" ]; then
+          #  cuda_tag="cu124"
+          #else
+          #  echo "Unsupported CUDA version"
+          #  exit 1
+          #fi
           # fix cuda version
           cuda_tag="cu121"
 
-#          tag=v${version}-${cuda_tag}
+          #tag=v${version}-${cuda_tag}
           tag=v${version}
 
-#          if [ "${{ matrix.build_type }}" = "all" ]; then
-#            tag_suffix=""
-#          elif [ "${{ matrix.build_type }}" = "srt" ]; then
-#            tag_suffix="-srt"
-#          else
-#            echo "Unsupported build type"
-#            exit 1
-#          fi
+          #if [ "${{ matrix.build_type }}" = "all" ]; then
+          #  tag_suffix=""
+          #elif [ "${{ matrix.build_type }}" = "srt" ]; then
+          #  tag_suffix="-srt"
+          #else
+          #  echo "Unsupported build type"
+          #  exit 1
+          #fi
           tag_suffix="-metric"
 
           docker build . -f docker/metric.Dockerfile --build-arg CUDA_VERSION=$cuda_tag --build-arg BUILD_TYPE=all -t ghcr.io/kiritoxkiriko/sglang:${tag}${tag_suffix} --no-cache
