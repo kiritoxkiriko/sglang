@@ -1,4 +1,4 @@
-ARG VERSION=v0.6.0
+ARG VERSION=v0.3.0
 
 FROM lmsysorg/sglang:${VERSION}-cu121
 
