@@ -32,9 +32,9 @@ from transformers import (
 )
 from transformers.models.llava.modeling_llava import LlavaMultiModalProjector
 from vllm.config import CacheConfig
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
+from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.mm_utils import (
     get_anyres_image_grid_shape,
     unpad_image,
@@ -136,8 +136,14 @@ class LlavaBaseForCausalLM(nn.Module):
         image_sizes: Optional[List[List[int]]] = None,
         image_offsets: Optional[List[int]] = None,
     ) -> torch.Tensor:
-        if input_metadata.forward_mode == ForwardMode.EXTEND:
+        if input_metadata.forward_mode.is_extend():
             bs = input_metadata.batch_size
+            # Got List[List[str]] extend it to List[str]
+            # The length of the List should be equal to batch size
+            modalities_list = []
+            for modalities in input_metadata.modalities:
+                if modalities is not None:
+                    modalities_list.extend(modalities)
 
             # Embed text inputs
             input_embeds = self.language_model.model.embed_tokens(input_ids)
@@ -179,11 +185,14 @@ class LlavaBaseForCausalLM(nn.Module):
                     new_image_features = []
                     height = width = self.num_patches_per_side
                     for image_idx, image_feature in enumerate(image_features):
-                        if len(image_sizes[image_idx]) == 1:
+                        if modalities_list[image_idx] == "image":
                             image_aspect_ratio = (
                                 self.config.image_aspect_ratio
                             )  # single image
-                        else:
+                        elif (
+                            modalities_list[image_idx] == "multi-images"
+                            or modalities_list[image_idx] == "video"
+                        ):
                             image_aspect_ratio = "pad"  # multi image
                         # image_aspect_ratio = (
                         #     "anyres" if len(image_sizes[image_idx]) == 1 else "pad"
@@ -191,6 +200,7 @@ class LlavaBaseForCausalLM(nn.Module):
                         if (
                             image_feature.shape[0] > 1
                             and "anyres" in image_aspect_ratio
+                            and modalities_list[image_idx] == "image"
                         ):
                             base_image_feature = image_feature[0]
                             image_feature = image_feature[1:]
@@ -290,7 +300,7 @@ class LlavaBaseForCausalLM(nn.Module):
                             )
                             image_feature = image_feature.unsqueeze(0)
                         else:
-                            if image_feature.shape[0] > 16:  # video
+                            if modalities_list[image_idx] == "video":  # video
                                 # 2x2 pooling
                                 num_of_frames = image_feature.shape[0]
                                 image_feature = image_feature.view(
@@ -312,6 +322,21 @@ class LlavaBaseForCausalLM(nn.Module):
                                     .transpose(1, 2)
                                     .contiguous()
                                 )  # N, C, H*W
+                            if "unpad" in self.mm_patch_merge_type:
+                                image_feature = torch.cat(
+                                    (
+                                        image_feature,
+                                        # Expand to (bs, 1, hidden_dim) and concat at the end of the image tokens
+                                        self.language_model.model.image_newline[
+                                            None, None
+                                        ].expand(
+                                            image_feature.shape[0],
+                                            1,
+                                            image_feature.shape[-1],
+                                        ),
+                                    ),
+                                    dim=1,
+                                )
 
                         new_image_features.append(image_feature)
                     image_features = new_image_features
@@ -350,7 +375,7 @@ class LlavaBaseForCausalLM(nn.Module):
             return self.language_model(
                 input_ids, positions, input_metadata, input_embeds=input_embeds
             )
-        elif input_metadata.forward_mode == ForwardMode.DECODE:
+        elif input_metadata.forward_mode.is_decode():
             return self.language_model(input_ids, positions, input_metadata)
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):

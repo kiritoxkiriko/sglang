@@ -18,6 +18,7 @@ limitations under the License.
 import asyncio
 import concurrent.futures
 import dataclasses
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -77,7 +78,6 @@ class TokenizerManager:
         self,
         server_args: ServerArgs,
         port_args: PortArgs,
-        model_override_args: dict = None,
     ):
         self.server_args = server_args
 
@@ -95,7 +95,7 @@ class TokenizerManager:
         self.hf_config = get_config(
             self.model_path,
             trust_remote_code=server_args.trust_remote_code,
-            model_override_args=model_override_args,
+            model_override_args=json.loads(server_args.json_model_override_args),
         )
         self.is_generation = is_generation_model(
             self.hf_config.architectures, self.server_args.is_embedding
@@ -123,6 +123,7 @@ class TokenizerManager:
                     initializer=init_global_processor,
                     mp_context=mp.get_context("fork"),
                     initargs=(server_args,),
+                    max_workers=os.environ.get("SGLANG_CPU_COUNT", os.cpu_count()),
                 )
             else:
                 self.tokenizer = get_tokenizer(
@@ -188,6 +189,7 @@ class TokenizerManager:
                 pixel_values, image_hashes, image_sizes = await self._get_pixel_values(
                     obj.image_data if not_use_index else obj.image_data[index]
                 )
+                modalities = obj.modalities
                 return_logprob = (
                     obj.return_logprob if not_use_index else obj.return_logprob[index]
                 )
@@ -196,8 +198,6 @@ class TokenizerManager:
                     if not_use_index
                     else obj.logprob_start_len[index]
                 )
-                if return_logprob and logprob_start_len == -1:
-                    logprob_start_len = len(input_ids) - 1
                 top_logprobs_num = (
                     obj.top_logprobs_num
                     if not_use_index
@@ -243,14 +243,13 @@ class TokenizerManager:
             pixel_values, image_hashes, image_sizes = await self._get_pixel_values(
                 obj.image_data[0]
             )
+            modalities = obj.modalities
             return_logprob = obj.return_logprob[0]
             logprob_start_len = obj.logprob_start_len[0]
             top_logprobs_num = obj.top_logprobs_num[0]
 
         # Send to the controller
         if self.is_generation:
-            if return_logprob and logprob_start_len == -1:
-                logprob_start_len = len(input_ids) - 1
             tokenized_obj = TokenizedGenerateReqInput(
                 rid,
                 input_text,
@@ -263,6 +262,12 @@ class TokenizerManager:
                 logprob_start_len,
                 top_logprobs_num,
                 obj.stream,
+                modalities,
+                (
+                    obj.lora_path[index]
+                    if isinstance(obj.lora_path, list)
+                    else obj.lora_path
+                ),
             )
         else:  # is embedding
             tokenized_obj = TokenizedEmbeddingReqInput(
@@ -341,11 +346,10 @@ class TokenizerManager:
                 sampling_params = self._get_sampling_params(obj.sampling_params[index])
 
                 if self.is_generation:
-                    if obj.return_logprob[index] and obj.logprob_start_len[index] == -1:
-                        obj.logprob_start_len[index] = len(input_ids) - 1
                     pixel_values, image_hashes, image_sizes = (
                         await self._get_pixel_values(obj.image_data[index])
                     )
+                    modalities = obj.modalities
 
                     tokenized_obj = TokenizedGenerateReqInput(
                         rid,
@@ -359,6 +363,12 @@ class TokenizerManager:
                         obj.logprob_start_len[index],
                         obj.top_logprobs_num[index],
                         obj.stream,
+                        modalities,
+                        (
+                            obj.lora_path[index]
+                            if isinstance(obj.lora_path, list)
+                            else obj.lora_path
+                        ),
                     )
                 else:
                     tokenized_obj = TokenizedEmbeddingReqInput(
