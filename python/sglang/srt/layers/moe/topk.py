@@ -1,3 +1,17 @@
+# Copyright 2024 SGLang Team
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
 from typing import Callable, Optional
 
 import torch
@@ -10,7 +24,9 @@ def fused_topk_native(
     topk: int,
     renormalize: bool,
 ):
-    assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
+    assert (
+        hidden_states.shape[0] == gating_output.shape[0]
+    ), f"Number of tokens mismatch, {hidden_states.shape=} vs {gating_output.shape=}"
     M, _ = hidden_states.shape
     topk_weights = torch.empty(
         M, topk, dtype=torch.float32, device=hidden_states.device
@@ -166,7 +182,7 @@ def select_experts(
                 num_expert_group=num_expert_group,
                 topk_group=topk_group,
             )
-    elif torch_native:
+    elif torch_native and custom_routing_function is None:
         topk_weights, topk_ids = fused_topk_native(
             hidden_states=hidden_states,
             gating_output=router_logits,
