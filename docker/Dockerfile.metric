@@ -1,4 +1,4 @@
-ARG VERSION=v0.4.1.post7
+ARG VERSION=v0.4.2.post2
 
 FROM lmsysorg/sglang:${VERSION}-cu121
 
