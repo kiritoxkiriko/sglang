@@ -1,17 +1,19 @@
 import logging
-from typing import Dict, List
+from typing import List
 
 import torch
+import torch.distributed as dist
 from torch import nn
 
+from sglang.srt.distributed import get_tensor_model_parallel_group
+from sglang.srt.layers.dp_attention import get_attention_tp_group
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.sampling.custom_logit_processor import CustomLogitProcessor
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
-from sglang.srt.utils import crash_on_warnings, is_flashinfer_available
+from sglang.srt.utils import crash_on_warnings, get_bool_env_var, is_cuda_available
 
-if is_flashinfer_available():
-    from flashinfer.sampling import (
+if is_cuda_available():
+    from sgl_kernel import (
         min_p_sampling_from_probs,
         top_k_renorm_prob,
         top_k_top_p_sampling_from_probs,
@@ -21,11 +23,17 @@ if is_flashinfer_available():
 
 logger = logging.getLogger(__name__)
 
+SYNC_TOKEN_IDS_ACROSS_TP = get_bool_env_var("SYNC_TOKEN_IDS_ACROSS_TP")
+
 
 class Sampler(nn.Module):
     def __init__(self):
         super().__init__()
         self.use_nan_detectioin = global_server_args_dict["enable_nan_detection"]
+        self.tp_sync_group = get_tensor_model_parallel_group().device_group
+
+        if global_server_args_dict["enable_dp_attention"]:
+            self.tp_sync_group = get_attention_tp_group().device_group
 
     def forward(
         self,
@@ -64,9 +72,11 @@ class Sampler(nn.Module):
                     # NOTE: the top_p_renorm_prob from flashinfer has numerical problems,
                     # https://github.com/flashinfer-ai/flashinfer/issues/708
                     # so we use the torch implementation.
+
+                    # clamp to avoid -inf
                     logprobs = torch.log(
                         top_p_normalize_probs_torch(probs, sampling_info.top_ps)
-                    )
+                    ).clamp(min=torch.finfo(probs.dtype).min)
 
                 max_top_k_round, batch_size = 32, probs.shape[0]
                 uniform_samples = torch.rand(
@@ -75,7 +85,7 @@ class Sampler(nn.Module):
                 if sampling_info.need_min_p_sampling:
                     probs = top_k_renorm_prob(probs, sampling_info.top_ks)
                     probs = top_p_renorm_prob(probs, sampling_info.top_ps)
-                    batch_next_token_ids, success = min_p_sampling_from_probs(
+                    batch_next_token_ids = min_p_sampling_from_probs(
                         probs, uniform_samples, sampling_info.min_ps
                     )
                 else:
@@ -87,9 +97,9 @@ class Sampler(nn.Module):
                         filter_apply_order="joint",
                     )
 
-                if self.use_nan_detectioin and not torch.all(success):
-                    logger.warning("Detected errors during sampling!")
-                    batch_next_token_ids = torch.zeros_like(batch_next_token_ids)
+                    if self.use_nan_detectioin and not torch.all(success):
+                        logger.warning("Detected errors during sampling!")
+                        batch_next_token_ids = torch.zeros_like(batch_next_token_ids)
 
             elif global_server_args_dict["sampling_backend"] == "pytorch":
                 # A slower fallback implementation with torch native operations.
@@ -101,15 +111,14 @@ class Sampler(nn.Module):
                     sampling_info.need_min_p_sampling,
                 )
                 if return_logprob:
+                    # clamp to avoid -inf
                     logprobs = torch.log(
                         top_p_normalize_probs_torch(probs, sampling_info.top_ps)
-                    )
+                    ).clamp(min=torch.finfo(probs.dtype).min)
             else:
                 raise ValueError(
                     f"Invalid sampling backend: {global_server_args_dict['sampling_backend']}"
                 )
-
-        batch_next_token_ids = batch_next_token_ids.to(torch.int32)
 
         # Attach logprobs to logits_output (in-place modification)
         if return_logprob:
@@ -124,7 +133,21 @@ class Sampler(nn.Module):
                 batch_next_token_ids,
             ]
 
-        return batch_next_token_ids
+        if SYNC_TOKEN_IDS_ACROSS_TP or sampling_info.grammars:
+            # For performance reasons, SGLang does not sync the final token IDs across TP ranks by default.
+            # This saves one all-reduce, but the correctness of this approach depends on the determinism of several operators:
+            # the last all-reduce, the last lm_head matmul, and all sampling kernels.
+            # These kernels are deterministic in most cases, but there are some rare instances where they are not deterministic.
+            # In such cases, enable this env variable to prevent hanging due to TP ranks becoming desynchronized.
+            # When using xgrammar, this becomes more likely so we also do the sync when grammar is used.
+
+            torch.distributed.all_reduce(
+                batch_next_token_ids,
+                op=dist.ReduceOp.MIN,
+                group=self.tp_sync_group,
+            )
+
+        return batch_next_token_ids.to(torch.int32)
 
     def _apply_custom_logit_processor(
         self, logits: torch.Tensor, sampling_batch_info: SamplingBatchInfo
